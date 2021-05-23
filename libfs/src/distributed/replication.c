@@ -25,7 +25,7 @@ struct replication_context *g_sync_ctx[g_n_nodes];
 
 __thread sync_meta_t *session;
 
-threadpool thread_pool;
+static threadpool thread_pool;
 
 static void replication_worker(void *arg);
 
@@ -423,7 +423,7 @@ int make_replication_request_sync(peer_meta_t *peer)
 
 	// no need to replicate if we only have a single node 
 	if(g_n_nodes == 1)
-		return -EBUSY;
+		return 0;
 
 	pthread_mutex_lock(g_sync_ctx[peer->id]->peer->shared_rsync_addr_lock);
 

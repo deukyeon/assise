@@ -1,6 +1,9 @@
 #ifndef _FS_H_
 #define _FS_H_
 
+#include <sys/statfs.h>
+#include <sys/stat.h>
+
 #include "global/global.h"
 #include "global/types.h"
 #include "global/defs.h"
@@ -681,6 +684,7 @@ struct inode* icreate(uint8_t type);
 struct inode* ialloc(uint32_t inum, struct dinode *dip);
 int idealloc(struct inode *inode);
 struct inode* idup(struct inode*);
+struct inode *iget_without_lock(uint32_t inum);
 struct inode* iget(uint32_t inum);
 void ilock(struct inode*);
 void iput(struct inode*);
@@ -696,13 +700,15 @@ struct mlfs_dirent *dir_add_entry(struct inode *dir_inode, char *name, struct in
 struct mlfs_dirent *dir_change_entry(struct inode *dir_inode, char *oldname, char *newname);
 struct mlfs_dirent *dir_remove_entry(struct inode *dir_inode,char *name, struct inode **found);
 int dir_get_entry(struct inode *dir_inode, struct linux_dirent *buf, offset_t off);
-int dir_get_entry64(struct inode *dir_inode, struct linux_dirent64 *buf, offset_t off);
+ssize_t dir_get_entry64(struct inode *dir_inode, struct linux_dirent64 *buf, offset_t off);
 int namecmp(const char*, const char*);
 struct inode* namei(char*);
 struct inode* nameiparent(char*, char*);
 int readi_unopt(struct inode*, uint8_t *, offset_t, uint32_t);
-int readi(struct inode*, struct mlfs_reply*, offset_t, uint32_t, char *);
+ssize_t readi(struct inode*, struct mlfs_reply*, offset_t, uint32_t, char *);
 void stati(struct inode*, struct stat *);
+void statxi(struct inode*, struct statx *);
+void statfsi(struct inode *, struct statfs *);
 int add_to_log(struct inode*, uint8_t*, offset_t, uint32_t, uint8_t);
 int check_log_invalidation(struct fcache_block *_fcache_block);
 int get_dirent(struct inode *dir_inode, struct mlfs_dirent *buf, offset_t offset);

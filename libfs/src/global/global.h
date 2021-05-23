@@ -70,8 +70,9 @@ void mlfs_setup(void);
 #define MAX_REMOTE_PATH 40
 
 // Directory is a file containing a sequence of dirent structures.
-#define DIRSIZ 28
+//#define DIRSIZ 28
 //#define DIRSIZ 60
+#define DIRSIZ 124
 
 #define SHM_START_ADDR (void *)0x7ff000000000UL
 
@@ -103,6 +104,7 @@ void mlfs_setup(void);
 // # of LibFS processes (max)
 #define g_n_max_libfs 30
 
+#define MAX_SOCK_BUF 65536
 /**
  *
  * All global variables here are default set by global.c

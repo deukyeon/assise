@@ -173,7 +173,7 @@ ssize_t mlfs_file_read(struct file *f, struct mlfs_reply *reply, size_t n)
 	return -1;
 }
 
-int mlfs_file_read_offset(struct file *f, struct mlfs_reply *reply, size_t n, offset_t off)
+ssize_t mlfs_file_read_offset(struct file *f, struct mlfs_reply *reply, size_t n, offset_t off)
 {
 	int r;
 
@@ -192,6 +192,8 @@ int mlfs_file_read_offset(struct file *f, struct mlfs_reply *reply, size_t n, of
 
 		if (r < 0) 
 			panic("read error\n");
+
+		f->off = off + r;
 
 		iunlock(f->ip);
 		return r;

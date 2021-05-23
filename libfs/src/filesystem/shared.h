@@ -13,6 +13,8 @@
 extern "C" {
 #endif
 
+#define ANON_INODE_FS_MAGIC 0x09041934
+
 #define RANGENODE_PER_PAGE  254
 
 //#ifdef DISTRIBUTED
@@ -315,8 +317,8 @@ struct dinode {
 
 	addr_t l1_addrs[NDIRECT+1];	//direct block addresses: 64 B
 	addr_t l2_addrs[NDIRECT+1];	
-	addr_t l3_addrs[NDIRECT+1];	
-}; // 256 bytes.
+	addr_t l3_addrs[NDIRECT+1];
+}; // 256 bytes. // 512 by adding attributes
 
 #define setup_ondisk_inode(dip, type) \
 	memset(dip, 0, sizeof(struct dinode)); \
@@ -491,7 +493,7 @@ extern uint8_t *shm_base;
  *  LRU_HEADS ~ BLOOM_HEAD : bloom filter for lsm tree search
  *  BLOOM_HEAD ~           : unused	
  */ 
-struct list_head *lru_heads;
+extern struct list_head *lru_heads;
 
 typedef struct lru_key {
 	uint8_t dev;

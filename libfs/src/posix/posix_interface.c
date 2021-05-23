@@ -12,6 +12,7 @@
 #include "filesystem/stat.h"
 #include "filesystem/fs.h"
 #include "filesystem/file.h"
+#include "filesystem/xattr.h"
 #include "log/log.h"
 #include "posix/posix_interface.h"
 
@@ -105,7 +106,7 @@ int mlfs_posix_open(char *path, int flags, uint16_t mode)
 	//start_log_tx();
 
 	mlfs_posix("[POSIX] open(%s) O_CREAT:%d\n", path, flags & O_CREAT);
-#if 0
+#if 1
 	char temp[MAX_PATH];
 	strncpy(temp, path, MAX_PATH);
 	temp[sizeof(temp) - 1] = '\0';
@@ -118,6 +119,7 @@ int mlfs_posix_open(char *path, int flags, uint16_t mode)
 		inode = mlfs_object_create(path, T_FILE);
 
 		if (!inode) {
+		  errno = ENOENT;
 			return -ENOENT;
 		}
 
@@ -132,11 +134,13 @@ int mlfs_posix_open(char *path, int flags, uint16_t mode)
 		}
 
 		if ((inode = namei(path)) == NULL) {
+		  errno = ENOENT;
 			return -ENOENT;
 		}
 
 		if (inode->itype == T_DIR) {
 			if (!(flags |= (O_RDONLY|O_DIRECTORY))) {
+			  errno = EACCES;
 				return -EACCES;
 			}
 		}
@@ -146,6 +150,7 @@ int mlfs_posix_open(char *path, int flags, uint16_t mode)
 
 	if (f == NULL) {
 		iunlockput(inode);
+		errno = ENOMEM;
 		return -ENOMEM;
 	}
 
@@ -173,10 +178,10 @@ int mlfs_posix_open(char *path, int flags, uint16_t mode)
 	//}
 #endif
 
-#if 0
+#if 1
 	strncpy(f->path, temp, MAX_PATH);
 	f->path[sizeof(f->path) - 1] = '\0';
-	HASH_ADD_STR(g_fd_table.open_files_ht, path, f);
+	//	HASH_ADD_STR(g_fd_table.open_files_ht, path, f);
 	mlfs_debug("Adding file with path: %s | TEST: %s\n", f->path, temp);
 #endif
 
@@ -189,6 +194,8 @@ int mlfs_posix_open(char *path, int flags, uint16_t mode)
 
 	pthread_rwlock_unlock(&f->rwlock);
 
+	mlfs_debug ("open %s with fd %d\n", path, fd);
+
 	return SET_MLFS_FD(fd);
 }
 
@@ -198,12 +205,13 @@ int mlfs_posix_access(char *pathname, int mode)
 
 	mlfs_posix("[POSIX] access(%s)\n", pathname);
 
-	if (mode != F_OK)
-		panic("does not support other than F_OK\n");
+	/* if (mode != F_OK) */
+	/* 	panic("does not support other than F_OK\n"); */
 
 	inode = namei(pathname);
 
 	if (!inode) {
+	  errno = ENOENT;
 		return -ENOENT;
 	}
 
@@ -231,6 +239,7 @@ int mlfs_posix_read(int fd, uint8_t *buf, int count)
 	mlfs_assert(f);
 
 	if (f->ref == 0) {
+	  errno = EBADF;
 		panic("file descriptor is wrong\n");
 		return -EBADF;
 	}
@@ -244,7 +253,7 @@ int mlfs_posix_read(int fd, uint8_t *buf, int count)
 	return ret;
 }
 
-int mlfs_posix_pread64(int fd, uint8_t *buf, int count, loff_t off)
+ssize_t mlfs_posix_pread64(int fd, uint8_t *buf, int count, loff_t off)
 {
 	int ret = 0;
 	struct file *f;
@@ -258,6 +267,7 @@ int mlfs_posix_pread64(int fd, uint8_t *buf, int count, loff_t off)
 	mlfs_assert(f);
 
 	if (f->ref == 0) {
+	  errno = EBADF;
 		panic("file descriptor is wrong\n");
 		return -EBADF;
 	}
@@ -292,6 +302,7 @@ int mlfs_posix_write(int fd, uint8_t *buf, size_t count)
 	mlfs_assert(f);
 
 	if (f->ref == 0) {
+	  errno = EBADF;
 		panic("file descriptor is wrong\n");
 		return -EBADF;
 	}
@@ -307,6 +318,68 @@ int mlfs_posix_write(int fd, uint8_t *buf, size_t count)
 	//	g_perf_stats.tmp_tsc += (asm_rdtscp() - start_tsc_tmp);
 
 	return ret;
+}
+
+int mlfs_posix_writev(int fd, const struct iovec *iov, int iovcnt)
+{
+  int ret;
+  struct file *f;
+
+  f = &g_fd_table.open_files[fd];
+
+  pthread_rwlock_wrlock(&f->rwlock);
+
+  mlfs_assert(f);
+
+  if (f->ref == 0) {
+    errno = EBADF;
+    panic("file descriptor is wrong\n");
+    return -EBADF;
+  }
+
+  int i;
+  for (i=0; i<iovcnt; ++i) {
+    ret = mlfs_file_write(f, iov[i].iov_base, iov[i].iov_len, f->off);
+    if (ret > 0) {
+      f->off += ret;
+    }
+  }
+
+  pthread_rwlock_unlock(&f->rwlock);
+
+  return ret;
+}
+
+int mlfs_posix_pwritev(int fd, const struct iovec *iov, int iovcnt, off_t off)
+{
+  
+  int ret;
+  struct file *f;
+
+  f = &g_fd_table.open_files[fd];
+
+  pthread_rwlock_wrlock(&f->rwlock);
+
+  mlfs_assert(f);
+
+  if (f->ref == 0) {
+    errno = EBADF;
+    panic("file descriptor is wrong\n");
+    return -1;
+  }
+
+  int i;
+  f->off = off;
+  for (i=0; i<iovcnt; ++i) {
+    ret = mlfs_file_write(f, iov[i].iov_base, iov[i].iov_len, f->off);
+    if (ret > 0) {
+      f->off += ret;
+    }
+  }
+
+  pthread_rwlock_unlock(&f->rwlock);
+
+  return ret;
 }
 
 int mlfs_posix_pwrite64(int fd, uint8_t *buf, size_t count, loff_t off)
@@ -363,6 +436,7 @@ int mlfs_posix_lseek(int fd, int64_t offset, int origin)
 	f = &g_fd_table.open_files[fd];
 
 	if (f->ref == 0) {
+	  errno = EBADF;
 		return -EBADF;
 	}
 
@@ -382,6 +456,7 @@ int mlfs_posix_lseek(int fd, int64_t offset, int origin)
 			f->off = f->ip->size;
 			break;
 		default:
+		  errno = EINVAL;
 			ret = -EINVAL;
 			break;
 	}
@@ -399,12 +474,17 @@ int mlfs_posix_close(int fd)
 	f = &g_fd_table.open_files[fd];
 
 	if (!f) {
+	  errno = EBADF;
 		return -EBADF;
 	}
 
-	mlfs_debug("close file inum %u fd %d\n", f->ip->inum, f->fd);
+	mlfs_debug("close file inum %u fd %d path %s\n", f->ip->inum, f->fd, f->path);
 
 	return mlfs_file_close(f);
+	/* int ret = mlfs_file_close(f); */
+	/* mlfs_do_rdigest (); */
+
+	/* return ret; */
 }
 
 int mlfs_posix_mkdir(char *path, mode_t mode)
@@ -417,6 +497,7 @@ int mlfs_posix_mkdir(char *path, mode_t mode)
 	inode = mlfs_object_create(path, T_DIR);
 
 	if (!inode) {
+	  errno = ENOENT;
 		//abort_log_tx();
 		return -ENOENT;
 	}
@@ -438,6 +519,7 @@ int mlfs_posix_stat(const char *filename, struct stat *stat_buf)
 	inode = namei((char *)filename);
 
 	if (!inode) {
+	  errno = ENOENT;
 		return -ENOENT;
 	}
 
@@ -454,17 +536,36 @@ int mlfs_posix_fstat(int fd, struct stat *stat_buf)
 
 	f = &g_fd_table.open_files[fd];
 
-	if (f->ref == 0) 
+	if (f->ref == 0) {
+	  errno = ENOENT;
 		return -ENOENT;
+	}
 
 	mlfs_assert(f->ip);
 
 	stati(f->ip, stat_buf);
 
+	mlfs_debug("%s\n", f->path);
+
 	return 0;
 }
 
-int mlfs_posix_fallocate(int fd, offset_t offset, offset_t len)
+int mlfs_posix_statx(const char *filename, struct statx *statx_buf)
+{
+	struct inode *inode;
+
+	inode = namei((char *)filename);
+
+	if (!inode) {
+	  errno = ENOENT;
+		return -ENOENT;
+	}
+
+	statxi(inode, statx_buf);
+	return 0;
+}
+
+int mlfs_posix_fallocate(int fd, int mode, offset_t offset, offset_t len)
 {
 	struct file *f;
 	uint32_t alloc_length;
@@ -474,17 +575,21 @@ int mlfs_posix_fallocate(int fd, offset_t offset, offset_t len)
 
 	f = &g_fd_table.open_files[fd];
 
-	if (f->ref == 0)
+	if (f->ref == 0) {
+	  errno = EBADF;
 		return -EBADF;
+	}
 
 	if (offset != 0) {
-		mlfs_posix("[POSIX] fallocate: %s\n", "nonzero offset unsupported");
-		return -EINVAL;
+	  errno = EINVAL;
+	  mlfs_posix("[POSIX] fallocate: %s\n", "nonzero offset unsupported");
+	  return -EINVAL;
 	}
 
 	if (len < f->ip->size) {
-		mlfs_posix("[POSIX] fallocate: length %lu < current inode size %lu\n", len, f->ip->size);
-		return -EINVAL;
+	  errno = EINVAL;
+	  mlfs_posix("[POSIX] fallocate: length %lu < current inode size %lu\n", len, f->ip->size);
+	  return -EINVAL;
 	}
 
 	start_log_tx();
@@ -564,6 +669,7 @@ int mlfs_posix_unlink(const char *filename)
 
 	dir_inode = nameiparent((char *)filename, name);
 	if (!dir_inode) {
+	  errno = ENOENT;
 		mlfs_debug("unlink: didn't find parent dir for file %s\n", filename);
 		abort_log_tx();
 		return -ENOENT;
@@ -577,6 +683,7 @@ int mlfs_posix_unlink(const char *filename)
 	
 	log_entry = dir_remove_entry(dir_inode, name, &inode);
 	if (!inode) {
+	  errno = ENOENT;
 		abort_log_tx();
 		return -ENOENT;
 	}
@@ -606,6 +713,7 @@ int mlfs_posix_truncate(const char *filename, offset_t length)
 	inode = namei((char *)filename);
 
 	if (!inode) {
+	  errno = ENOENT;
 		abort_log_tx();
 		return -ENOENT;
 	}
@@ -633,6 +741,7 @@ int mlfs_posix_ftruncate(int fd, offset_t length)
 	f = &g_fd_table.open_files[fd];
 
 	if (f->ref == 0) {
+	  errno = EBADF;
 		return -EBADF;
 	}
 
@@ -689,8 +798,10 @@ int mlfs_posix_rename(char *oldpath, char *newpath)
 			abort_log_tx();
 			if (log_replaced)
 				mlfs_free(log_replaced);
+			errno = ENOENT;
 			return -ENOENT;
 		}
+
 
 		commit_log_tx();
 
@@ -724,6 +835,7 @@ int mlfs_posix_rename(char *oldpath, char *newpath)
 			if (log_replaced)
 				mlfs_free(log_replaced);
 
+			errno = ENOENT;
 			return -ENOENT;
 		}
 
@@ -771,11 +883,14 @@ size_t mlfs_posix_getdents(int fd, struct linux_dirent *buf,
 	f = &g_fd_table.open_files[fd];
 
 	if (f->ref == 0) {
+	  errno = EBADF;
 		return -EBADF;
 	}
 
-	if (f->type != FD_DIR) 
+	if (f->type != FD_DIR) {
+	  errno = EBADF;
 		return -EBADF;
+	}
 
 	/* glibc compute bytes with struct linux_dirent
 	 * but ip->size is is computed by struct dirent, 
@@ -802,16 +917,19 @@ size_t mlfs_posix_getdents64(int fd, struct linux_dirent64 *buf,
 		size_t nbytes, offset_t off)
 {
 	struct file *f;
-	int bytes;
+	ssize_t bytes;
 
 	f = &g_fd_table.open_files[fd];
 
 	if (f->ref == 0) {
+	  errno = EBADF;
 		return -EBADF;
 	}
 
-	if (f->type != FD_DIR) 
+	if (f->type != FD_DIR) {
+	  errno = EBADF;
 		return -EBADF;
+	}
 
 	/* glibc compute bytes with struct linux_dirent
 	 * but ip->size is is computed by struct dirent, 
@@ -844,6 +962,7 @@ int mlfs_posix_fcntl(int fd, int cmd, void *arg)
 	f = &g_fd_table.open_files[fd];
 
 	if (f->ref == 0) {
+	  errno = EBADF;
 		return -EBADF;
 	}
 
@@ -853,6 +972,169 @@ int mlfs_posix_fcntl(int fd, int cmd, void *arg)
 	}
 
 	return 0;
+}
+
+int mlfs_posix_statfs(const char *filename, struct statfs *buf)
+{
+  if (!buf)
+    {
+      errno = EFAULT;
+      return -1;
+    }
+  
+  struct inode *inode;
+
+  inode = namei((char *)filename);
+
+  if (!inode) {
+    errno = ENOENT;
+    return -ENOENT;
+  }
+
+  statfsi(inode, buf);
+
+  return 0;
+}
+
+int mlfs_posix_fstatfs(int fd, struct statfs *buf)
+{
+  if (!buf)
+    {
+      errno = EFAULT;
+      return -1;
+    }
+  
+  struct file *f;
+
+  f = &g_fd_table.open_files[fd];
+
+  if (f->ref == 0) {
+    errno = EBADF;
+    return -EBADF;
+  }
+
+  mlfs_assert(f->ip);
+
+  statfsi(f->ip, buf);
+
+  return 0;
+}
+
+int mlfs_posix_setxattr(const char *filename, const char *name,
+			const void *value, size_t size, size_t flags)
+{
+  struct inode *inode;
+
+  inode = namei((char *)filename);
+
+  if (!inode) {
+    errno = ENOENT;
+    return -ENOENT;
+  }
+
+  return setxattri(inode, name, value, size, flags);
+}
+
+int mlfs_posix_fsetxattr(int fd, const char*name,
+			 const void *value, size_t size, size_t flags)
+{
+  struct file *f = &g_fd_table.open_files[fd];
+
+  if (f->ref == 0) {
+    errno = EBADF;
+    return -EBADF;
+  }
+
+  mlfs_assert(f->ip);
+
+  return setxattri(f->ip, name, value, size, flags);
+}
+
+ssize_t mlfs_posix_getxattr(const char *filename, const char *name,
+			void *value, size_t size)
+{
+  struct inode *inode;
+
+  inode = namei((char *)filename);
+
+  if(!inode) {
+    errno = ENOENT;
+    return -ENOENT;
+  }
+
+  return getxattri(inode, name, value, size);
+}
+
+ssize_t mlfs_posix_fgetxattr(int fd, const char *name,
+			     void *value, size_t size)
+{
+  struct file *f = &g_fd_table.open_files[fd];
+
+  if (f->ref == 0) {
+    errno = EBADF;
+    return -EBADF;
+  }
+
+  mlfs_assert(f->ip);
+
+  return getxattri(f->ip, name, value, size);
+}
+
+
+int mlfs_posix_removexattr(const char *filename, const char *name)
+{
+  struct inode *inode;
+
+  inode = namei((char *)filename);
+
+  if(!inode) {
+    errno = ENOENT;
+    return -ENOENT;
+  }
+
+  return removexattri(inode, name);
+}
+
+int mlfs_posix_fremovexattr(int fd, const char *name)
+{
+  struct file *f = &g_fd_table.open_files[fd];
+
+  if (f->ref == 0) {
+    errno = EBADF;
+    return -EBADF;
+  }
+
+  mlfs_assert(f->ip);
+
+  return removexattri(f->ip, name);
+}
+
+ssize_t mlfs_posix_listxattr(const char *filename, char *list, size_t size)
+{ 
+  struct inode *inode;
+
+  inode = namei((char *)filename);
+
+  if(!inode) {
+    errno = ENOENT;
+    return -ENOENT;
+  }
+
+  return listxattri(inode, list, size);
+}
+
+ssize_t mlfs_posix_flistxattr(int fd, char *list, size_t size)
+{
+  struct file *f = &g_fd_table.open_files[fd];
+
+  if (f->ref == 0) {
+    errno = EBADF;
+    return -EBADF;
+  }
+
+  mlfs_assert(f->ip);
+
+  return listxattri(f->ip, list, size);
 }
 
 #ifdef __cplusplus

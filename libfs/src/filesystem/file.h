@@ -14,7 +14,7 @@ struct file {
 	uint8_t readable;
 	uint8_t writable;
 	struct inode *ip;
-	offset_t off;
+	off_t off;
 	
 	//useful for issuing remote reads without having to do a path lookup
 	char path[MAX_PATH];
@@ -44,7 +44,7 @@ struct inode *mlfs_object_create(char *path, unsigned short mode);
 
 int mlfs_file_stat(struct file *f, struct stat *st);
 ssize_t mlfs_file_read(struct file *f, struct mlfs_reply *reply, size_t n);
-int mlfs_file_read_offset(struct file *f, struct mlfs_reply *reply, 
+ssize_t mlfs_file_read_offset(struct file *f, struct mlfs_reply *reply, 
 		size_t n, offset_t off);
 int mlfs_file_write(struct file *f, uint8_t *buf, offset_t offset, size_t n);
 int mlfs_file_fallocate(struct file *f, size_t len, offset_t offset);

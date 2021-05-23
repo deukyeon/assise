@@ -29,6 +29,52 @@ int get_dirent(struct inode *dir_inode, struct mlfs_dirent *buf, offset_t offset
 	return readi(dir_inode, &reply, offset, sizeof(struct mlfs_dirent), NULL);
 }
 
+struct inode *dir_lookup_without_lock
+(struct inode *dir_inode, char *name, offset_t *poff)
+{
+  // FIXME: duplicate codes with dir_lookup
+  struct mlfs_dirent de;
+  struct inode *ip = NULL;
+  offset_t off;
+
+  ip = de_cache_find(dir_inode, name, poff);
+
+  if (ip)
+    return ip;
+
+  mlfs_debug("dir_lookup: de_cache miss for dir %u, name %s\n", dir_inode->inum, name);
+
+  if ((dir_inode->n_de_cache_entry + 2) * sizeof(struct mlfs_dirent) == dir_inode->size) {
+    mlfs_debug("%s\n", "not found w/ full de cache - skipping iteration");
+    return NULL;
+  }
+
+  // iterate through file's dirent until finding name match
+  for (off = 0; off < dir_inode->size; off += sizeof(struct mlfs_dirent)) {
+    if (get_dirent(dir_inode, &de, off) != sizeof(struct mlfs_dirent))
+      break;
+
+#ifdef MLFS_DEBUG
+    if (strstr(de.name, "enron") != NULL) {
+      mlfs_debug("[DEBUG] name %s de.name %s match = %s\n", name, de.name, !namecmp(name, de.name)?"YES":"NO");
+    }
+#endif
+
+    if (!namecmp(name, de.name)) {
+      *poff = off;
+#if MLFS_NAMESPACES
+      ip = iget_without_lock(de.inum | (dir_inode->inum & g_namespace_mask));
+#else
+      ip = iget_without_lock(de.inum);
+#endif			
+      return ip;
+    }
+  }
+
+  mlfs_info("dir_lookup: did not find %s in dir %u\n", name, dir_inode->inum);
+  return NULL;
+}
+
 // Lookup an inode by name and return offset of its directory entry
 // Note: dir_inode should be locked by calling ilock() before using this function
 struct inode *dir_lookup(struct inode *dir_inode, char *name, offset_t *poff)
@@ -70,7 +116,7 @@ struct inode *dir_lookup(struct inode *dir_inode, char *name, offset_t *poff)
 
 		if(!ip) {
 #if MLFS_NAMESPACES
-			ip = iget(de.inum | (dir_inode->inum & g_namespace_mask));	
+			ip = iget(de.inum | (dir_inode->inum & g_namespace_mask));
 #else
 			ip = iget(de.inum);
 #endif
@@ -117,7 +163,7 @@ int dir_get_entry(struct inode *dir_inode, struct linux_dirent *buf, offset_t of
 
 /* linux_dirent must be identical to gblic kernel_dirent
  * defined in sysdeps/unix/sysv/linux/getdents.c */
-int dir_get_entry64(struct inode *dir_inode, struct linux_dirent64 *buf, offset_t off)
+ssize_t dir_get_entry64(struct inode *dir_inode, struct linux_dirent64 *buf, offset_t off)
 {
 	struct mlfs_dirent de;
 	int ret;
@@ -129,6 +175,7 @@ int dir_get_entry64(struct inode *dir_inode, struct linux_dirent64 *buf, offset_
 #else
 	buf->d_ino = de.inum;
 #endif
+	buf->d_type = (dir_inode->itype == T_DIR) ? LINUX_DT_DIR : LINUX_DT_REG;
 
 	buf->d_off = (off/sizeof(struct mlfs_dirent)) * sizeof(struct linux_dirent64);
 	buf->d_reclen = sizeof(struct linux_dirent64);
@@ -319,7 +366,7 @@ static struct inode* namex(char *path, int parent, char *name)
 			iunlock(ip);
 			return ip;
 		}
-		if ((next = dir_lookup(ip, name, &off)) == NULL) {
+		if ((next = dir_lookup_without_lock(ip, name, &off)) == NULL) {
 			iunlockput(ip);
 			return NULL;
 		}

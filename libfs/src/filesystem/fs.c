@@ -9,6 +9,7 @@
 #include <sys/stat.h>
 #include <sys/mman.h>
 
+
 #include "storage/storage.h"
 #include "mlfs/mlfs_user.h"
 #include "global/global.h"
@@ -48,6 +49,8 @@ uint8_t enable_perf_stats;
 uint8_t *g_fcache_base;
 unsigned long *g_fcache_bitmap;
 #endif
+
+struct list_head *lru_heads;
 
 struct lru g_fcache_head;
 
@@ -148,6 +151,7 @@ void signal_shutdown_fs(int signum)
 
 void shutdown_fs(void)
 {
+  mlfs_debug("%s\n", __func__);
 	int ret;
 	int _enable_perf_stats = enable_perf_stats;
 
@@ -398,6 +402,7 @@ static void mlfs_rpc_init(void) {
 
 void init_fs(void)
 {
+  mlfs_debug("%s\n", __func__);
 #ifdef USE_SLAB
 	unsigned long memsize_gb = 4;
 #endif
@@ -783,6 +788,32 @@ void iupdate(struct inode *ip)
 // Find the inode with number inum on device dev
 // and return the in-memory copy. Does not lock
 // the inode and does not read it from disk.
+struct inode *iget_without_lock(uint32_t inum)
+{
+  // FIXME: duplicate codes with iget
+  struct inode *ip;
+
+  ip = icache_find(inum);
+
+  if (ip) {
+    if ((ip->flags & I_VALID) && (ip->flags & I_DELETING))
+      return NULL;
+
+    ip->i_ref++;
+  } else {
+    struct dinode dip;
+    // allocate new in-memory inode
+    mlfs_debug("allocate new inode by iget %u\n", inum);
+    read_ondisk_inode(inum, &dip);
+
+    ip = ialloc(inum, &dip); // a locked inode is created
+
+    iunlock(ip);
+  }
+
+  return ip;
+}
+
 struct inode* iget(uint32_t inum)
 {
 	struct inode *ip;
@@ -1085,6 +1116,61 @@ void stati(struct inode *ip, struct stat *st)
 	st->st_mtime = (time_t)ip->mtime.tv_sec;
 	st->st_ctime = (time_t)ip->ctime.tv_sec;
 	st->st_atime = (time_t)ip->atime.tv_sec;
+}
+
+void statxi(struct inode *ip, struct statx *st)
+{
+	mlfs_assert(ip);
+	mlfs_assert(st);
+	
+	st->stx_ino = ip->inum;
+	st->stx_mode = 0;
+	if(ip->itype == T_DIR)
+		st->stx_mode |= S_IFDIR;
+	else
+		st->stx_mode |= S_IFREG;
+			
+	//      st->stx_mode |= S_IRWXU | S_IRWXG | S_IRWXO; /* TODO: set the actual permission */
+	st->stx_nlink = ip->nlink;
+	st->stx_uid = 0;
+	st->stx_gid = 0;
+	st->stx_size = ip->size;
+	//st->st_blksize = g_block_size_bytes;
+	// This could be incorrect if there is file holes.
+	st->stx_blocks = ip->size / 512;
+
+	st->stx_mtime.tv_sec = (int64_t)ip->mtime.tv_sec;
+	st->stx_mtime.tv_nsec = (uint32_t)ip->mtime.tv_usec * 1000;
+	st->stx_ctime.tv_sec = (int64_t)ip->ctime.tv_sec;
+	st->stx_ctime.tv_nsec = (uint32_t)ip->ctime.tv_usec * 1000;
+	st->stx_atime.tv_sec = (int64_t)ip->atime.tv_sec;
+	st->stx_atime.tv_nsec = (uint32_t)ip->atime.tv_usec * 1000;
+
+	st->stx_dev_major = g_root_dev; //ip->dev;
+	st->stx_rdev_major = 0;
+}
+
+void statfsi(struct inode *ip, struct statfs *st)
+{
+	mlfs_assert(ip);
+	mlfs_assert(st);
+		
+	st->f_type = ANON_INODE_FS_MAGIC;
+	st->f_bsize = g_block_size_bytes;   /* Optimal transfer block size */
+	st->f_blocks = disk_sb[g_root_dev].ndatablocks;  /* Total data blocks in filesystem */
+	st->f_bfree = disk_sb[g_root_dev].ndatablocks -
+	  sb[g_root_dev]->used_blocks;
+	/* st->f_bfree = sb[g_root_dev]->shared_free_list.num_free_blocks; */
+	/* if (sb[g_root_dev]->free_lists) */
+	/* 	st->f_bfree += sb[g_root_dev]->free_lists->num_free_blocks;   /\* Free blocks in filesystem *\/ */
+	st->f_bavail = st->f_bfree;  /* Free blocks available to unprivileged user */
+	st->f_files = sb[g_root_dev]->ondisk->ninodes;   /* Total inodes in filesystem */
+	st->f_ffree = sb[g_root_dev]->num_blocks;   /* Free inodes in filesystem */
+	memset(&st->f_fsid, 0, 2 * sizeof(int)); //, ip->inum };    /* Filesystem ID */
+	memcpy(&st->f_fsid + sizeof(int), &ip->inum, sizeof(int));
+	st->f_namelen = DIRSIZ; /* Maximum length of filenames */
+	st->f_frsize = 0;  /* Fragment size (since Linux 2.6) */
+	st->f_flags = 0;   /* Mount flags of filesystem */
 }
 
 // TODO: Now, eviction is simply discarding. Extend this function
@@ -2082,7 +2168,7 @@ do_io_aligned:
 	return io_size;
 }
 
-int readi(struct inode *ip, struct mlfs_reply *reply, offset_t off, uint32_t io_size, char *path)
+ssize_t readi(struct inode *ip, struct mlfs_reply *reply, offset_t off, uint32_t io_size, char *path)
 {
 	int ret = 0;
 	//uint8_t *_dst;
