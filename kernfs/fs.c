@@ -629,9 +629,7 @@ int digest_allocate(uint8_t from_dev, uint8_t to_dev, int libfs_id, uint32_t inu
 		sync_inode_from_dinode(ip, &dip);
 	}
 
-	// FIXME: Is it wrong if ip->size == length?
-	// if (ip->size >= length) 
-	if (ip->size > length)
+	if (ip->size >= length)
 		panic("error: fallocate to smaller size!");
 
 	blk_length = length >> g_block_size_shift;
@@ -1298,9 +1296,6 @@ static void digest_replay_and_optimize(uint8_t from_dev,
 
 				mlfs_debug("%s\n", "-------------------------------");
 				break;
-			}
-		        case L_TYPE_ALLOC: {
-			        break;
 			}
 			default: {
 				printf("%s: digest type %d\n", __func__, loghdr->type[i]);

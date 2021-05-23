@@ -91,7 +91,7 @@ pthread_mutex_t *g_log_mutex_shared;
 static unsigned long digest_thread_id[g_n_devices];
 //Thread entry point
 void *digest_thread(void *arg);
-static threadpool thread_pool;
+threadpool thread_pool;
 
 mlfs_time_t start_time;
 mlfs_time_t end_time;
@@ -120,22 +120,14 @@ void init_log()
 	g_fs_log = (struct fs_log *)mlfs_zalloc(sizeof(struct fs_log));
 	g_log_sb = (struct log_superblock *)mlfs_zalloc(sizeof(struct log_superblock));
 
-#if defined(DISTRIBUTED)
 	g_fs_log->log_sb_blk = disk_sb[g_log_dev].log_start + g_self_id * g_log_size;
-#else
-	g_fs_log->log_sb_blk = disk_sb[g_log_dev].log_start;
-#endif
 
 	//FIXME: this is not the actual log size (rename variable!)
 	g_fs_log->size = g_fs_log->log_sb_blk + g_log_size;
 
 	// FIXME: define usage of log dev
 	g_fs_log->dev = g_log_dev;
-#if defined(DISTRIBUTED)
 	g_fs_log->id = g_self_id;
-#else
-	g_fs_log->id = 0;
-#endif
 	g_fs_log->nloghdr = 0;
 
 	ret = pipe((int*)g_fs_log->digest_fd);
@@ -592,7 +584,7 @@ void commit_log_tx(void)
 		loghdr_meta = get_loghdr_meta();
 
 
-#ifdef LOG_OPT
+#if LOG_OPT
 	if (loghdr_meta->is_hdr_allocated) {
 		if(loghdr_meta->previous_loghdr)
 			mlfs_free(loghdr_meta->previous_loghdr);
@@ -996,7 +988,7 @@ static void persist_log_blocks(struct logheader_meta *loghdr_meta)
 		switch(type) {
 			case L_TYPE_UNLINK:
 			case L_TYPE_INODE_CREATE:
-		        case L_TYPE_INODE_UPDATE: {
+			case L_TYPE_INODE_UPDATE: {
 				persist_log_inode(loghdr_meta, i);
 				break;
 			} 
@@ -1017,7 +1009,7 @@ static void persist_log_blocks(struct logheader_meta *loghdr_meta)
 			case L_TYPE_ALLOC:
 				break;
 			default: {
-			  panic("unsupported log type\n");
+				panic("unsupported log type\n");
 				break;
 			}
 		}
@@ -1285,8 +1277,7 @@ void add_to_loghdr(uint8_t type, struct inode *inode, offset_t data,
 		ext_used++;
 		memmove(&loghdr_meta->loghdr_ext[ext_used], extra, extra_len);
 		ext_used += extra_len;
-		//		strncat((char *)&loghdr_meta->loghdr_ext[ext_used], "|", 1);
-		loghdr_meta->loghdr_ext[ext_used] = '|';
+		strncat((char *)&loghdr_meta->loghdr_ext[ext_used], "|", 1);
 		ext_used++;
 		loghdr_meta->loghdr_ext[ext_used] = '\0';
 		loghdr_meta->ext_used = ext_used;
@@ -1559,11 +1550,7 @@ int make_digest_request_async(int percent)
 uint32_t make_digest_request_sync(int percent)
 {
 	int ret, i;
-#if defined(DISTRIBUTED)
 	char cmd[RPC_MSG_BYTES];
-#else
-	char cmd[MAX_SOCK_BUF];
-#endif
 	uint32_t digest_count = 0, n_digest;
 	loghdr_t *loghdr;
 	struct inode *ip;
@@ -1619,16 +1606,9 @@ uint32_t make_digest_request_sync(int percent)
 	g_fs_log->n_digest_req = (percent * n_digest) / 100;
 #endif
 	socklen_t len = sizeof(struct sockaddr_un);
-
-#if defined(DISTRIBUTED)
 	sprintf(cmd, "|digest |%d|%d|%u|%lu|%lu|%lu",
 			g_self_id, g_log_dev, g_fs_log->n_digest_req, g_log_sb->start_digest,
 		       	 g_fs_log->log_sb_blk + 1, atomic_load(&g_log_sb->end));
-#else
-	sprintf(cmd, "|digest |%d|%d|%u|%lu|%lu|%lu",
-			0, g_log_dev, g_fs_log->n_digest_req, g_log_sb->start_digest,
-		       	 g_fs_log->log_sb_blk + 1, atomic_load(&g_log_sb->end));
-#endif
 
 	mlfs_printf("%s\n", cmd);
 
@@ -1667,11 +1647,7 @@ void handle_digest_response(char *ack_cmd)
 
 	mlfs_printf("%s\n", ack_cmd);
 
-#if defined(DISTRIBUTED)
 	mlfs_assert(g_self_id == libfs_id);
-#else
-	mlfs_assert(libfs_id == 0);
-#endif
 
 	if (g_fs_log->n_digest_req == n_digested)  {
 		mlfs_info("%s", "digest is done correctly\n");

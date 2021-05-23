@@ -104,7 +104,6 @@ void mlfs_setup(void);
 // # of LibFS processes (max)
 #define g_n_max_libfs 30
 
-#define MAX_SOCK_BUF 65536
 /**
  *
  * All global variables here are default set by global.c

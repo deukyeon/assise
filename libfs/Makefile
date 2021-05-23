@@ -46,7 +46,7 @@ SYSCALL_INTERCEPT_DIR := $(abspath $(CURDIR)/lib/syscall_intercept/install/)
 
 INCLUDES  := $(addprefix -I,src/ $(RDMA_CORE_DIR)/build/include $(RDMA_DIR) $(NVML_DIR)/include $(SYSCALL_INTERCEPT_DIR)/include)
 
-LD_FLAGS = -lpthread -laio -lstdc++ -lm -lnuma -L$(NVML_DIR)/nondebug/ -Wl,-rpath=$(NVML_DIR)/nondebug/ -lpmem -lrt -L$(RDMA_CORE_DIR)/build/lib -Wl,-rpath=$(RDMA_CORE_DIR)/build/lib  #-Wl,-fuse-ld=gold
+LD_FLAGS = -lpthread -laio -lstdc++ -lm -lnuma -L$(NVML_DIR)/nondebug/ -lpmem -lrt -L$(RDMA_CORE_DIR)/build/lib -Wl,-rpath=$(RDMA_CORE_DIR)/build/lib  #-Wl,-fuse-ld=gold
 
 #MLFS_FLAGS = -DUSE_SLAB -DLIBFS -DMLFS_INFO
 MLFS_FLAGS = -DLIBFS
@@ -112,7 +112,7 @@ $(BUILD_DIR):
 #build/libmlfs.a: $(OBJ)
 libmlfs: $(OBJ) $(OBJCPP)
 	ar cr build/libmlfs.a $(OBJ) $(OBJCPP)
-	$(CC) -shared $(DEBUG) -o build/libmlfs.so $(OBJ) $(OBJCPP) $(LD_FLAGS) -DLIBFS $(MLFS_FLAGS) -L$(JEMALLOC_DIR)/lib -L$(RDMA_DIR) -Wl,-rpath=$(abspath $(RDMA_DIR)) -lrdma -Wl,-rpath=$(abspath $(JEMALLOC_DIR)/lib) -ljemalloc -lrdmacm -libverbs -lpthread -L$(SYSCALL_INTERCEPT_DIR)/lib -Wl,-rpath=$(abspath $(SYSCALL_INTERCEPT_DIR)/lib) -lsyscall_intercept -Wl,--init=init_fs -Wl,--fini=shutdown_fs
+	$(CC) -shared $(DEBUG) -o build/libmlfs.so $(OBJ) $(OBJCPP) $(LD_FLAGS) -DLIBFS $(MLFS_FLAGS) -L$(JEMALLOC_DIR)/lib -L$(RDMA_DIR) -Wl,-rpath=$(abspath $(RDMA_DIR)) -lrdma -Wl,-rpath=$(abspath $(JEMALLOC_DIR)/lib) -ljemalloc -lrdmacm -libverbs -lpthread -L$(SYSCALL_INTERCEPT_DIR)/lib -Wl,-rpath=$(abspath $(SYSCALL_INTERCEPT_DIR)/lib) -lsyscall_intercept
 
 
 mkfs: $(OBJ) libmlfs mkfs.c
